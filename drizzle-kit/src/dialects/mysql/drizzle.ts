@@ -8,11 +8,13 @@ import {
 	MySqlColumn,
 	MySqlCustomColumn,
 	MySqlDateTime,
+	MySqlDateTimeString,
 	MySqlDialect,
 	MySqlEnumColumn,
 	MySqlTable,
 	MySqlText,
 	MySqlTimestamp,
+	MySqlTimestampString,
 	MySqlVarChar,
 	MySqlView,
 } from 'drizzle-orm/mysql-core';
@@ -127,7 +129,10 @@ export const fromDrizzleSchema = (
 
 			let onUpdateNow: boolean = false;
 			let onUpdateNowFsp: number | null = null;
-			if (is(column, MySqlTimestamp) || is(column, MySqlDateTime)) {
+			if (
+				is(column, MySqlTimestamp) || is(column, MySqlTimestampString)
+				|| is(column, MySqlDateTime) || is(column, MySqlDateTimeString)
+			) {
 				onUpdateNow = column.hasOnUpdateNow ?? false;
 				onUpdateNowFsp = column.onUpdateNowFsp ?? null;
 			}

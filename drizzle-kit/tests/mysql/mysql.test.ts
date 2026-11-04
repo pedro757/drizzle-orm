@@ -2216,6 +2216,7 @@ test('create table with datetime .onUpdateNow() diff variations', async () => {
 			col4: datetime({ fsp: 6 }).onUpdateNow({ fsp: 6 }),
 			col5: datetime({ mode: 'string' }).onUpdateNow(),
 			col6: datetime({ mode: 'date' }).onUpdateNow(),
+			col7: datetime({ mode: 'string', fsp: 3 }).onUpdateNow({ fsp: 3 }),
 		}),
 	};
 
@@ -2227,8 +2228,9 @@ test('create table with datetime .onUpdateNow() diff variations', async () => {
 		+ '\t`col2` datetime(1) ON UPDATE CURRENT_TIMESTAMP(1),' + '\n'
 		+ '\t`col3` datetime(3) ON UPDATE CURRENT_TIMESTAMP(3),' + '\n'
 		+ '\t`col4` datetime(6) ON UPDATE CURRENT_TIMESTAMP(6),' + '\n'
-		+ '\t`col5` datetime,' + '\n'
-		+ '\t`col6` datetime ON UPDATE CURRENT_TIMESTAMP' + '\n'
+		+ '\t`col5` datetime ON UPDATE CURRENT_TIMESTAMP,' + '\n'
+		+ '\t`col6` datetime ON UPDATE CURRENT_TIMESTAMP,' + '\n'
+		+ '\t`col7` datetime(3) ON UPDATE CURRENT_TIMESTAMP(3)' + '\n'
 		+ ');\n',
 	]);
 });

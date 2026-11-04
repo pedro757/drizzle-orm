@@ -1,5 +1,6 @@
 import { int as mssqlInt, mssqlTable } from 'drizzle-orm/mssql-core';
-import { index as mysqlIndex, int as mysqlInt, mysqlTable, varchar } from 'drizzle-orm/mysql-core';
+import type { MySqlDatetimeConfig, MySqlTimestampConfig } from 'drizzle-orm/mysql-core';
+import { datetime, index as mysqlIndex, int as mysqlInt, mysqlTable, timestamp, varchar } from 'drizzle-orm/mysql-core';
 import { integer, pgTable, text } from 'drizzle-orm/pg-core';
 import {
 	index as sqliteIndex,
@@ -136,6 +137,74 @@ test('mysql hint ids use the public schema', async () => {
 	});
 
 	expect(sql).toEqual(['RENAME TABLE `a` TO `b`;']);
+});
+
+// https://github.com/drizzle-team/drizzle-orm/issues/6632
+const mysqlOnUpdateTypes = [
+	{ type: 'timestamp', column: (config: MySqlTimestampConfig) => timestamp(config) },
+	{ type: 'datetime', column: (config: MySqlDatetimeConfig) => datetime(config) },
+] as const;
+
+test.each(mysqlOnUpdateTypes)('mysql string-mode $type generates ON UPDATE with and without precision', async ({
+	type,
+	column,
+}) => {
+	const prev = await mysqlJson({});
+	const cur = await mysqlJson({
+		users: mysqlTable('users', {
+			updatedAt: column({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+			preciseUpdatedAt: column({ mode: 'string', fsp: 3 }).onUpdateNow({ fsp: 3 }).notNull(),
+			unchangedAt: column({ mode: 'string' }),
+		}),
+	});
+
+	expect(await mysqlMigration(prev, cur)).toStrictEqual([
+		'CREATE TABLE `users` (\n'
+		+ `\t\`updatedAt\` ${type} NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n`
+		+ `\t\`preciseUpdatedAt\` ${type}(3) NOT NULL ON UPDATE CURRENT_TIMESTAMP(3),\n`
+		+ `\t\`unchangedAt\` ${type}\n`
+		+ ');\n',
+	]);
+});
+
+test.each(mysqlOnUpdateTypes)('mysql $type mode changes preserve existing ON UPDATE attributes', async ({ column }) => {
+	const prev = await mysqlJson({
+		users: mysqlTable('users', {
+			updatedAt: column({ mode: 'date' }).defaultNow().onUpdateNow().notNull(),
+			preciseUpdatedAt: column({ mode: 'date', fsp: 3 }).onUpdateNow({ fsp: 3 }).notNull(),
+		}),
+	});
+	const cur = await mysqlJson({
+		users: mysqlTable('users', {
+			updatedAt: column({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+			preciseUpdatedAt: column({ mode: 'string', fsp: 3 }).onUpdateNow({ fsp: 3 }).notNull(),
+		}),
+	});
+
+	expect(await mysqlMigration(prev, cur)).toStrictEqual([]);
+});
+
+test.each(mysqlOnUpdateTypes)('mysql string-mode $type adds and removes ON UPDATE only when requested', async ({
+	type,
+	column,
+}) => {
+	const prev = await mysqlJson({
+		users: mysqlTable('users', {
+			updatedAt: column({ mode: 'string', fsp: 3 }).notNull(),
+		}),
+	});
+	const cur = await mysqlJson({
+		users: mysqlTable('users', {
+			updatedAt: column({ mode: 'string', fsp: 3 }).onUpdateNow({ fsp: 3 }).notNull(),
+		}),
+	});
+
+	expect(await mysqlMigration(prev, cur)).toStrictEqual([
+		`ALTER TABLE \`users\` MODIFY COLUMN \`updatedAt\` ${type}(3) NOT NULL ON UPDATE CURRENT_TIMESTAMP(3);`,
+	]);
+	expect(await mysqlMigration(cur, prev)).toStrictEqual([
+		`ALTER TABLE \`users\` MODIFY COLUMN \`updatedAt\` ${type}(3) NOT NULL;`,
+	]);
 });
 
 test('mssql hint ids use the dbo schema', async () => {
