@@ -101,9 +101,19 @@ export const ddlDiff = async (
 
 	const alters = diff.alters(ddl1, ddl2);
 
+	const tablesWithNewKeys = new Set([
+		...indexesDiff.filter((it) => it.$diffType === 'create' && it.isUnique).map((it) => it.table),
+		...pksDiff.filter((it) => it.$diffType === 'create').map((it) => it.table),
+	]);
+	const tablesWithDeferredFKs = new Set<string>();
 	const createTableStatements = createdTables.map((it) => {
 		const full = fullTableFromDDL(it, ddl2);
-		if (createdTables.length > 1) full.fks = []; // fks have to be created after all tables created
+		// Existing parents may still need columns or keys before an inline FK can reference them.
+		const parentKeyPending = full.fks.some((fk) => fk.tableTo !== it.name && tablesWithNewKeys.has(fk.tableTo));
+		if (createdTables.length > 1 || parentKeyPending) {
+			tablesWithDeferredFKs.add(it.name);
+			full.fks = [];
+		}
 		return prepareStatement('create_table', { table: full });
 	});
 
@@ -204,7 +214,7 @@ export const ddlDiff = async (
 		.map((it) => prepareStatement('create_index', { index: it }));
 
 	const createFKsStatements = fksDiff.filter((it) => it.$diffType === 'create')
-		.filter((x) => createdTables.length >= 2 || !createdTables.some((it) => it.name === x.table))
+		.filter((x) => tablesWithDeferredFKs.has(x.table) || !createdTables.some((it) => it.name === x.table))
 		.map((it) => prepareStatement('create_fk', { fk: it }));
 
 	const createPKStatements = pksDiff.filter((it) => it.$diffType === 'create')
