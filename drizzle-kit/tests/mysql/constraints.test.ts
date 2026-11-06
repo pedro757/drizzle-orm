@@ -90,6 +90,85 @@ test('#1', async () => {
 	expect(pst).toStrictEqual(st0);
 });
 
+// https://github.com/drizzle-team/drizzle-orm/issues/6649
+test.each([
+	{ key: 'unique', addParentColumn: false },
+	{ key: 'unique', addParentColumn: true },
+	{ key: 'primary', addParentColumn: false },
+])('new table fk waits for parent $key key (addParentColumn=$addParentColumn)', async ({ key, addParentColumn }) => {
+	const oldParent = mysqlTable('Parent', {
+		id: key === 'primary' ? int().notNull() : int().primaryKey(),
+		...(addParentColumn ? {} : { tenantId: int().notNull() }),
+	});
+	const parent = mysqlTable('Parent', {
+		id: key === 'primary' ? int().notNull() : int().primaryKey(),
+		tenantId: int().notNull(),
+	}, (table) => [
+		key === 'primary'
+			? primaryKey({ columns: [table.tenantId, table.id] })
+			: unique('Parent_tenant_id_key').on(table.tenantId, table.id),
+	]);
+	const child = mysqlTable('Child', {
+		id: int().primaryKey(),
+		tenantId: int().notNull(),
+		parentId: int().notNull(),
+	}, (table) => [
+		foreignKey({
+			name: 'Child_parent_fk',
+			columns: [table.tenantId, table.parentId],
+			foreignColumns: [parent.tenantId, parent.id],
+		}),
+	]);
+	const from = { parent: oldParent };
+	const to = { parent, child };
+	await push({ db, to: from });
+
+	const expected = [
+		'CREATE TABLE `Child` (\n\t`id` int PRIMARY KEY,\n\t`tenantId` int NOT NULL,\n\t`parentId` int NOT NULL\n);\n',
+		...(addParentColumn ? ['ALTER TABLE `Parent` ADD `tenantId` int NOT NULL;'] : []),
+		key === 'primary'
+			? 'ALTER TABLE `Parent` ADD PRIMARY KEY (`tenantId`,`id`);'
+			: 'CREATE UNIQUE INDEX `Parent_tenant_id_key` ON `Parent` (`tenantId`,`id`);',
+		'ALTER TABLE `Child` ADD CONSTRAINT `Child_parent_fk` FOREIGN KEY (`tenantId`,`parentId`) REFERENCES `Parent`(`tenantId`,`id`);',
+	];
+	const { sqlStatements: generated } = await diff(from, to, []);
+	expect(generated).toStrictEqual(expected);
+	const { sqlStatements: pushed } = await push({ db, to });
+	expect(pushed).toStrictEqual(expected);
+
+	await db.query('INSERT INTO `Parent` (`id`, `tenantId`) VALUES (1, 1);');
+	await db.query('INSERT INTO `Child` (`id`, `tenantId`, `parentId`) VALUES (1, 1, 1);');
+	await expect(
+		db.query('INSERT INTO `Child` (`id`, `tenantId`, `parentId`) VALUES (2, 2, 1);'),
+	).rejects.toThrow('Cannot add or update a child row');
+});
+
+test('new table fk stays inline when the parent key already exists', async () => {
+	const parent = mysqlTable('Parent', {
+		id: int().primaryKey(),
+		tenantId: int().notNull(),
+	}, (table) => [unique('Parent_tenant_id_key').on(table.tenantId, table.id)]);
+	const child = mysqlTable('Child', {
+		id: int().primaryKey(),
+		tenantId: int().notNull(),
+		parentId: int().notNull(),
+	}, (table) => [
+		foreignKey({
+			name: 'Child_parent_fk',
+			columns: [table.tenantId, table.parentId],
+			foreignColumns: [parent.tenantId, parent.id],
+		}),
+	]);
+	await push({ db, to: { parent } });
+	const { sqlStatements: generated } = await diff({ parent }, { parent, child }, []);
+	const { sqlStatements: pushed } = await push({ db, to: { parent, child } });
+	const expected = [
+		'CREATE TABLE `Child` (\n\t`id` int PRIMARY KEY,\n\t`tenantId` int NOT NULL,\n\t`parentId` int NOT NULL,\n\tCONSTRAINT `Child_parent_fk` FOREIGN KEY (`tenantId`,`parentId`) REFERENCES `Parent`(`tenantId`,`id`)\n);\n',
+	];
+	expect(generated).toStrictEqual(expected);
+	expect(pushed).toStrictEqual(expected);
+});
+
 // TODO: implement geometry types
 test('unique constraint errors #1', async () => {
 	const to = {
